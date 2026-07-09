@@ -36,33 +36,58 @@ def mostrar_memoria():
     print("\nMemoria total:", MEMORIA_TOTAL, "unidades")
 
 
+def asignar():
+    pid = int(input("ID del proceso: "))
+    tam = int(input("Tamaño: "))
+
+    for i, bloque in enumerate(memoria):
+
+        if bloque["libre"] and bloque["tamano"] >= tam:
+
+            nuevo = {
+                "inicio": bloque["inicio"],
+                "fin": bloque["inicio"] + tam - 1,
+                "tamano": tam,
+                "libre": False,
+                "pid": pid
+            }
+
+            restante = bloque["tamano"] - tam
+
+            memoria[i] = nuevo
+
+            if restante > 0:
+                memoria.insert(i + 1, {
+                    "inicio": nuevo["fin"] + 1,
+                    "fin": bloque["fin"],
+                    "tamano": restante,
+                    "libre": True,
+                    "pid": None
+                })
+
+            print("Proceso asignado.")
+            return
+
+    print("No existe memoria suficiente.")
+
+
 def main():
+
     while True:
 
-        print("\n===== SIMULADOR DE MEMORIA =====")
-        print("1. Asignar proceso")
-        print("2. Liberar proceso")
-        print("3. Ver estado de la memoria")
+        print("\n1. Asignar")
+        print("2. Ver memoria")
         print("0. Salir")
 
-        opcion = input("\nSeleccione una opción : ")
+        op = input("Opción: ")
 
-        if opcion == "1":
-            print("\nLa asignación de procesos aún no está implementada ")
+        if op == "1":
+            asignar()
 
-        elif opcion == "2":
-            print("\nLa liberación de procesos aún no está implementada ")
-
-        elif opcion == "3":
+        elif op == "2":
             mostrar_memoria()
 
-        elif opcion == "0":
-            print("\nHasta luego ")
+        elif op == "0":
             break
 
-        else:
-            print("\nOpción inválida ")
-
-
-if __name__ == "__main__":
-    main()
+main()
