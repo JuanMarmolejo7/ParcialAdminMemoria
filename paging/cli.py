@@ -1,177 +1,230 @@
-# Memoria representada como una lista de bloques
-# Cada bloque es un diccionario con: inicio, tamaño, libre y (si esta ocupado) pid
-memoria = [
-    {
-        "inicio": 0,
-        "tamano": 100,
-        "libre": True,
-        "pid": None
-    }
-]
+"""
+Simulador de paginacion de un nivel - Interfaz de consola
 
-UMBRAL = 4  # si el remanente al dividir un bloque es menor a esto, no se divide
+Menu interactivo para crear/terminar procesos, ver las tablas de paginas,
+el estado de los marcos fisicos y traducir direcciones virtuales a fisicas
 
+Uso:
+    python cli.py           # inicia el menu interactivo
+    python cli.py --demo    # corre el caso de prueba del enunciado y termina
+"""
 
-# Busqueda de bloque segun estrategia
+import importlib.util
+import os
+import sys
 
-def buscar_bloque(tamano, estrategia):
-    #Devuelve el indice del bloque elegido en 'memoria' segun la estrategia, o None
-    candidatos = [
-        i for i, b in enumerate(memoria)
-        if b["libre"] and b["tamano"] >= tamano
-    ]
-    if not candidatos:
-        return None
-
-    if estrategia == "first":
-        return candidatos[0]
-
-    if estrategia == "best":
-        return min(candidatos, key=lambda i: memoria[i]["tamano"])
-
-    if estrategia == "worst":
-        return max(candidatos, key=lambda i: memoria[i]["tamano"])
-
-    return None
+# Carpeta donde vive este archivo (paging/).
+_AQUI = os.path.dirname(os.path.abspath(__file__))
 
 
+def _cargar_local(nombre_modulo):
+    """Carga un modulo desde ESTA carpeta por ruta explicita.
 
-# Asignacion de procesos
+    Esto evita que Python tome un paquete externo del mismo nombre instalado
+    en el entorno (por ejemplo un 'paging' en site-packages). Siempre gana
+    el archivo que esta junto a este cli.py.
+    """
+    ruta = os.path.join(_AQUI, nombre_modulo + ".py")
+    if not os.path.exists(ruta):
+        sys.exit(
+            "\nError: no se encontro '" + nombre_modulo + ".py' en:\n  " + _AQUI +
+            "\nAsegurate de tener cli.py, paging.py y ui.py en la MISMA carpeta.\n"
+        )
+    spec = importlib.util.spec_from_file_location(nombre_modulo, ruta)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
 
-def asignar_proceso(pid, tamano, estrategia):
-    # verificar que el pid no este ya asignado
-    for b in memoria:
-        if not b["libre"] and b["pid"] == pid:
-            print(f"El proceso P{pid} ya tiene memoria asignada.")
-            return
 
-    idx = buscar_bloque(tamano, estrategia)
-    if idx is None:
-        print(f"No hay un bloque libre suficiente para P{pid} ({tamano}u).")
+ui = _cargar_local("ui")
+_paging = _cargar_local("paging")
+PagingSystem = _paging.PagingSystem
+TranslationError = _paging.TranslationError
+
+
+# ---------------------------------------------------------------------- #
+# Visualizacion
+# ---------------------------------------------------------------------- #
+def draw_frames(system: PagingSystem) -> None:
+    """Dibuja los marcos fisicos como una grilla de celdas."""
+    ui.section("Marcos fisicos")
+    cells = []
+    for f in range(system.total_frames):
+        owner = system.frame_owner[f]
+        if owner is None:
+            cells.append(f"{ui.BG_GREEN}{ui.BOLD} F{f:<2} libre {ui.RESET}")
+        else:
+            color = ui.proc_color(owner)
+            cells.append(f"{color}{ui.BOLD} F{f:<2}  P{owner:<2}{ui.RESET}")
+
+    # imprimir en filas de 4 marcos
+    per_row = 4
+    for i in range(0, len(cells), per_row):
+        print("  " + "  ".join(cells[i : i + per_row]))
+    print(
+        f"\n  {ui.BG_GREEN}  {ui.RESET} libre    "
+        f"{ui.BG_BLUE}  {ui.RESET} ocupado (Pn)"
+    )
+
+
+def show_state(system: PagingSystem) -> None:
+    ui.section("Configuracion")
+    ui.kv("Memoria virtual", system.virtual_size, "bytes")
+    ui.kv("Memoria fisica", system.physical_size, "bytes")
+    ui.kv("Tamaño de pagina/marco  ", system.page_size, "bytes")
+    ui.kv("Marcos totales", system.total_frames)
+    ui.kv("Marcos libres", len(system.free_frames))
+    ui.kv("Marcos usados", system.total_frames - len(system.free_frames))
+
+    draw_frames(system)
+
+    if system.processes:
+        for proc in system.processes.values():
+            ui.section(f"Tabla de paginas - P{proc.pid} "
+                       f"({proc.size} bytes, {proc.num_pages} paginas)")
+            rows = [
+                [e.page_number, e.frame if e.valid else "-",
+                 "si" if e.valid else "no"]
+                for e in proc.page_table
+            ]
+            ui.table(["Pagina", "Marco", "Valida"], rows, aligns=["r", "r", "c"])
+    else:
+        ui.info("No hay procesos cargados.")
+
+
+
+# Acciones del menu
+
+def action_create(system: PagingSystem) -> None:
+    try:
+        pid = int(ui.prompt("ID del proceso (numero)"))
+        size = int(ui.prompt("Tamaño del proceso (bytes)"))
+        proc = system.create_process(pid, size)
+        ui.ok(f"P{pid} creado: {size} bytes -> {proc.num_pages} paginas.")
+    except ValueError as e:
+        ui.error(str(e))
+
+
+def action_terminate(system: PagingSystem) -> None:
+    try:
+        pid = int(ui.prompt("ID del proceso a terminar"))
+        if system.terminate_process(pid):
+            ui.ok(f"P{pid} terminado y sus marcos liberados.")
+        else:
+            ui.warn(f"El proceso P{pid} no existe.")
+    except ValueError as e:
+        ui.error(str(e))
+
+
+def action_translate(system: PagingSystem) -> None:
+    try:
+        pid = int(ui.prompt("ID del proceso"))
+        vaddr = int(ui.prompt("Direccion virtual a traducir"))
+        r = system.translate(pid, vaddr)
+        ui.section("Traduccion de direccion")
+        ui.kv("Proceso", f"P{r['pid']}")
+        ui.kv("Direccion virtual", r["virtual_address"])
+        ui.kv("Pagina", r["page"])
+        ui.kv("Offset", r["offset"])
+        ui.kv("Marco fisico", r["frame"])
+        ui.ok(f"Direccion fisica = {r['frame']} x {system.page_size} + "
+              f"{r['offset']} = {ui.BOLD}{r['physical_address']}{ui.RESET}")
+    except (ValueError, TranslationError) as e:
+        ui.error(str(e))
+
+
+def action_reset(system: PagingSystem) -> None:
+    try:
+        v = int(ui.prompt("Memoria virtual (bytes)"))
+        p = int(ui.prompt("Memoria fisica (bytes)"))
+        pg = int(ui.prompt("Tamaño de pagina (bytes)"))
+        system.reset(virtual_size=v, physical_size=p, page_size=pg)
+        ui.ok(f"Sistema reiniciado: {system.total_frames} marcos disponibles.")
+    except ValueError as e:
+        ui.error(str(e))
+
+
+# ---------------------------------------------------------------------- #
+# Caso de prueba del enunciado
+# ---------------------------------------------------------------------- #
+def run_demo() -> None:
+    ui.banner("DEMO - Paginacion", "Caso de prueba del enunciado")
+    system = PagingSystem(virtual_size=1024, physical_size=512, page_size=64)
+    proc = system.create_process(1, 150)
+    ui.info(f"create_process(P1, 150 bytes) -> {proc.num_pages} paginas")
+    show_state(system)
+
+    ui.section("Traduccion de direccion virtual 130")
+    r = system.translate(1, 130)
+    ui.kv("Pagina", r["page"])
+    ui.kv("Offset", r["offset"])
+    ui.kv("Marco", r["frame"])
+    ui.kv("Direccion fisica", r["physical_address"])
+    ui.section("Resultado esperado")
+    ui.kv("Pagina / Offset / Marco", "2 / 2 / 2")
+    ui.kv("Direccion fisica", 130)
+
+
+
+# Bucle principal
+
+def main() -> None:
+    if "--demo" in sys.argv:
+        run_demo()
         return
 
-    bloque = memoria[idx]
-    remanente = bloque["tamano"] - tamano
+    ui.clear()
+    ui.banner("Simulador de Paginacion", "Traduccion de direcciones - 1 nivel")
+    try:
+        v = int(ui.prompt("Memoria virtual en bytes (Enter = 1024)") or "1024")
+        p = int(ui.prompt("Memoria fisica en bytes (Enter = 512)") or "512")
+        pg = int(ui.prompt("Tamaño de pagina en bytes (Enter = 64)") or "64")
+    except ValueError:
+        v, p, pg = 1024, 512, 64
+        ui.warn("Valores invalidos, uso 1024 / 512 / 64.")
 
-    if remanente < UMBRAL:
-        # no conviene dividirtodo el bloque queda ocupado (fragmentacion interna)
-        bloque["libre"] = False
-        bloque["pid"] = pid
-    else:
-        # dividir el bloque en: ocupado + libre remanente
-        ocupado = {
-            "inicio": bloque["inicio"],
-            "tamano": tamano,
-            "libre": False,
-            "pid": pid
-        }
-        libre = {
-            "inicio": bloque["inicio"] + tamano,
-            "tamano": remanente,
-            "libre": True,
-            "pid": None
-        }
-        memoria[idx:idx + 1] = [ocupado, libre]
+    system = PagingSystem(virtual_size=v, physical_size=p, page_size=pg)
 
-    print(f"P{pid} asignado ({tamano}u) con estrategia {estrategia}")
+    options = [
+        ("1", "Crear proceso"),
+        ("2", "Terminar proceso"),
+        ("3", "Traducir direccion virtual"),
+        ("4", "Ver estado del sistema"),
+        ("5", "Reiniciar sistema"),
+        ("6", "Correr caso de prueba (demo)"),
+        ("0", "Salir"),
+    ]
 
-
-# --------------------------------------------------------------------- #
-# Liberacion de procesos
-# --------------------------------------------------------------------- #
-def liberar_proceso(pid):
-    for b in memoria:
-        if not b["libre"] and b["pid"] == pid:
-            b["libre"] = True
-            b["pid"] = None
-            fusionar_bloques_libres()
-            print(f"P{pid} liberado.")
-            return
-    print(f"No se encontro un bloque ocupado por P{pid}")
-
-
-def fusionar_bloques_libres():
-    fusionada = []
-    for b in memoria:
-        if fusionada and fusionada[-1]["libre"] and b["libre"]:
-            fusionada[-1]["tamaño"] += b["tamaño"]
-        else:
-            fusionada.append(b)
-    memoria[:] = fusionada
-
-
-
-# Metricas de fragmentacion
-
-def fragmentacion_externa():
-    libres = [b["tamano"] for b in memoria if b["libre"]]
-    if not libres:
-        return 0
-    return sum(libres) - max(libres)
-
-
-def fragmentacion_interna():
-    # con este esquema (sin dividir cuando el remanente < UMBRAL) el desperdicio queda "oculto" dentro de bloques ocupados que
-    # son mas grandes que lo pedido; aqui se reporta como 0 porque no se guarda el tamano solicitado por separado
-    # Si se quiere calcular, hay que guardar tambien el tamano pedido en el bloque
-    return 0
-
-
-
-# Visualizacion
-
-def ver_estado():
-    print("\n--- Bloques de memoria ---")
-    for b in memoria:
-        fin = b["inicio"] + b["tamano"]
-        estado = "LIBRE" if b["libre"] else f"P{b['pid']}"
-        print(f"[{b['inicio']:>4} - {fin:<4}] tamano={b['tamano']:<4} -> {estado}")
-
-    print("\n--- Metricas ---")
-    print(f"Fragmentacion externa: {fragmentacion_externa()}")
-    print(f"Fragmentacion interna: {fragmentacion_interna()}")
-
-
-
-# Menu principal
-
-def main():
     while True:
-        print("\n=== Simulador de Memoria ===")
-        print("1. Asignar proceso")
-        print("2. Liberar proceso")
-        print("3. Ver estado")
-        print("0. Salir")
-        opcion = input("Opción: ")
+        ui.menu("Menu principal", options)
+        choice = ui.prompt("Opcion")
 
-        if opcion == "1":
-            try:
-                pid = int(input("ID del proceso: "))
-                tamano = int(input("Tamaño a reservar: "))
-                estrategia = input("Estrategia [first/best/worst]: ").strip().lower() or "first"
-                if estrategia not in ("first", "best", "worst"):
-                    print("Estrategia inválida.")
-                    continue
-                asignar_proceso(pid, tamano, estrategia)
-            except ValueError:
-                print("Debes ingresar números válidos.")
-
-        elif opcion == "2":
-            try:
-                pid = int(input("ID del proceso a liberar: "))
-                liberar_proceso(pid)
-            except ValueError:
-                print("Debes ingresar un número válido.")
-
-        elif opcion == "3":
-            ver_estado()
-
-        elif opcion == "0":
+        if choice == "1":
+            action_create(system)
+            show_state(system)
+        elif choice == "2":
+            action_terminate(system)
+            show_state(system)
+        elif choice == "3":
+            action_translate(system)
+        elif choice == "4":
+            show_state(system)
+        elif choice == "5":
+            action_reset(system)
+            show_state(system)
+        elif choice == "6":
+            run_demo()
+        elif choice == "0":
+            ui.ok("Hasta luego.")
             break
-
         else:
-            print("Opción inválida.")
+            ui.warn("Opcion no reconocida.")
+        ui.pause()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        ui.info("Interrumpido. Saliendo.")
