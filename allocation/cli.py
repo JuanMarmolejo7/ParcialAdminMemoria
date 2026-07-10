@@ -1,160 +1,221 @@
 """
-Versión 2 - Simulador de Asignación Contigua
-Ajustes
-Representar la memoria como un único bloque libre.
-Permitir visualizar el estado de la memoria.
+Simulador de asignacion contigua de memoria - Interfaz de consola.
+
+Menu interactivo para asignar/liberar procesos con las estrategias
+First / Best / Worst Fit y visualizar el mapa de memoria y las metricas
+de fragmentacion.
+
+Uso:
+    python cli.py           # inicia el menu interactivo
+    python cli.py --demo    # corre el caso de prueba del enunciado y termina
 """
 
-MEMORIA_TOTAL = 100
+import importlib.util
+import os
+import sys
 
-# La memoria inicia con un solo bloque libre
-memoria = [
-    {
-        "inicio": 0,
-        "fin": MEMORIA_TOTAL - 1,
-        "tamano": MEMORIA_TOTAL,
-        "libre": True,
-        "pid": None
-    }
-]
+# Carpeta donde vive este archivo (allocation/).
+_AQUI = os.path.dirname(os.path.abspath(__file__))
 
 
-def mostrar_memoria():
-    print("\n========== ESTADO DE LA MEMORIA ==========\n")
+def _cargar_local(nombre_modulo):
+    """Carga un modulo desde ESTA carpeta por ruta explicita
 
-    print(f"{'Inicio ':<10}{'Fin ':<10}{'Tamaño ':<10}{'Estado ':<10}")
-
-    for bloque in memoria:
-        estado = "Libre" if bloque["libre"] else f"P{bloque['pid']}"
-        print(
-            f"{bloque['inicio']:<10}"
-            f"{bloque['fin']:<10}"
-            f"{bloque['tamano']:<10}"
-            f"{estado:<10}"
+    Esto evita que Python tome un paquete externo del mismo nombre instalado en el entorno (por ejemplo
+     un 'allocator' en site-packages). Siempre gana el archivo que esta junto a este cli.py
+    """
+    ruta = os.path.join(_AQUI, nombre_modulo + ".py")
+    if not os.path.exists(ruta):
+        sys.exit(
+            "\nError: no se encontro '" + nombre_modulo + ".py' en:\n  " + _AQUI +
+            "\nAsegurate de tener cli.py, allocator.py y ui.py en la MISMA carpeta.\n"
         )
-
-    print("\nMemoria total:", MEMORIA_TOTAL, "unidades")
-
-
-def memoria_libre():
-
-    total = 0
-
-    for bloque in memoria:
-
-        if bloque["libre"]:
-            total += bloque["tamano"]
-
-    return total
+    spec = importlib.util.spec_from_file_location(nombre_modulo, ruta)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
 
 
-def asignar():
-    pid = int(input("ID del proceso: "))
-    tam = int(input("Tamaño: "))
-
-    for i, bloque in enumerate(memoria):
-
-        if bloque["libre"] and bloque["tamano"] >= tam:
-
-            nuevo = {
-                "inicio": bloque["inicio"],
-                "fin": bloque["inicio"] + tam - 1,
-                "tamano": tam,
-                "libre": False,
-                "pid": pid
-            }
-
-            restante = bloque["tamano"] - tam
-
-            memoria[i] = nuevo
-
-            if restante > 0:
-                memoria.insert(i + 1, {
-                    "inicio": nuevo["fin"] + 1,
-                    "fin": bloque["fin"],
-                    "tamano": restante,
-                    "libre": True,
-                    "pid": None
-                })
-
-            print("Proceso asignado.")
-            return
-
-    print("No existe memoria suficiente.")
-
-
-def liberar():
-
-    pid = int(input("Proceso a liberar: "))
-
-    for bloque in memoria:
-
-        if not bloque["libre"] and bloque["pid"] == pid:
-
-            bloque["libre"] = True
-            bloque["pid"] = None
-
-            print("Proceso liberado.")
-            return
-
-    print("Proceso no encontrado.")
-    fusionar()
+ui = _cargar_local("ui")
+MemoryAllocator = _cargar_local("allocator").MemoryAllocator
 
 
 
-def fusionar():
+# Visualizacion
 
-    i = 0
+def draw_memory_bar(alloc: MemoryAllocator) -> None:
+    """Dibuja la memoria como una barra proporcional al ancho de la terminal"""
+    width = ui.term_width() - 2
+    total = alloc.total_size
+    ui.section("Mapa de memoria")
 
-    while i < len(memoria)-1:
-
-        actual = memoria[i]
-        siguiente = memoria[i+1]
-
-        if actual["libre"] and siguiente["libre"]:
-
-            actual["fin"] = siguiente["fin"]
-            actual["tamano"] += siguiente["tamano"]
-
-            memoria.pop(i+1)
-
+    bar = ""
+    for block in alloc.blocks:
+        cells = max(1, round(block.size / total * width))
+        if block.free:
+            bar += f"{ui.BG_GREEN}{ui.BOLD}{' ' * cells}{ui.RESET}"
         else:
-            i += 1
+            color = ui.proc_color(block.pid)
+            label = f"P{block.pid}".center(cells)[:cells]
+            bar += f"{color}{ui.BOLD}{label}{ui.RESET}"
+    print(bar)
+    print(
+        f"{ui.BG_GREEN}  {ui.RESET} libre    "
+        f"{ui.BG_BLUE}  {ui.RESET} ocupado (Pn)    "
+        f"{ui.DIM}0 -> {total}{ui.RESET}"
+    )
 
-def fragmentacion_externa():
 
-    libres = []
+def show_state(alloc: MemoryAllocator) -> None:
+    draw_memory_bar(alloc)
 
-    for bloque in memoria:
+    ui.section("Bloques")
+    rows = []
+    for b in alloc.blocks:
+        estado = f"{ui.GREEN}LIBRE{ui.RESET}" if b.free else f"{ui.BLUE}P{b.pid}{ui.RESET}"
+        rows.append([
+            b.start,
+            b.end,
+            b.size,
+            estado,
+            b.internal_frag if not b.free and b.internal_frag else "-",
+        ])
+    ui.table(
+        ["Inicio", "Fin", "Tamaño", "Estado", "Frag.Int"],
+        rows,
+        aligns=["r", "r", "r", "c", "r"],
+    )
 
-        if bloque["libre"]:
-            libres.append(bloque["tamano"])
+    ui.section("Metricas")
+    ui.kv("Memoria total", alloc.total_size, "u")
+    ui.kv("Memoria usada", alloc.total_used(), "u")
+    ui.kv("Memoria libre", alloc.total_free(), "u")
+    ui.kv("Fragmentacion interna", alloc.internal_fragmentation(), "u")
+    ui.kv("Fragmentacion externa", alloc.external_fragmentation(), "u")
+    ui.kv("Umbral de division", alloc.threshold, "u")
 
-    if len(libres) <= 1:
-        return 0
 
-    return sum(libres) - max(libres)
-print()
+# Acciones del menu
 
-print("Memoria libre:", memoria_libre())
-print("Fragmentación externa:", fragmentacion_externa()) #Para comprobar
-def main():
+def action_allocate(alloc: MemoryAllocator) -> None:
+    try:
+        pid = int(ui.prompt("ID del proceso (numero)"))
+        size = int(ui.prompt("Tamano a reservar (unidades)"))
+        strat = ui.prompt("Estrategia [first/best/worst]").lower() or "first"
+        if strat not in MemoryAllocator.STRATEGIES:
+            ui.error(f"Estrategia invalida: {strat}")
+            return
+        if alloc.allocate(pid, size, strat):
+            ui.ok(f"P{pid} asignado ({size}u) con estrategia {strat}.")
+        else:
+            ui.warn(f"No hay un bloque libre suficiente para P{pid} ({size}u).")
+    except ValueError as e:
+        ui.error(str(e))
+
+
+def action_free(alloc: MemoryAllocator) -> None:
+    try:
+        pid = int(ui.prompt("ID del proceso a liberar"))
+        if alloc.free(pid):
+            ui.ok(f"P{pid} liberado y bloques libres fusionados.")
+        else:
+            ui.warn(f"No se encontro un bloque ocupado por P{pid}.")
+    except ValueError as e:
+        ui.error(str(e))
+
+
+def action_reset(alloc: MemoryAllocator) -> None:
+    try:
+        total = int(ui.prompt("Nuevo tamano total de memoria"))
+        thr = int(ui.prompt("Nuevo umbral de division"))
+        alloc.reset(total_size=total, threshold=thr)
+        ui.ok(f"Memoria reiniciada: {total}u, umbral {thr}u.")
+    except ValueError as e:
+        ui.error(str(e))
+
+
+# Caso de prueba del enunciado
+
+def run_demo() -> None:
+    ui.banner("DEMO - Asignacion contigua", "Caso de prueba del enunciado")
+    alloc = MemoryAllocator(total_size=100, threshold=4)
+    steps = [
+        ("allocate", 1, 20, "first"),
+        ("allocate", 2, 30, "first"),
+        ("allocate", 3, 10, "first"),
+        ("free", 2, None, None),
+        ("allocate", 4, 15, "best"),
+    ]
+    for op, pid, size, strat in steps:
+        if op == "allocate":
+            alloc.allocate(pid, size, strat)
+            ui.info(f"allocate(P{pid}, {size}u, {strat})")
+        else:
+            alloc.free(pid)
+            ui.info(f"free(P{pid})")
+    show_state(alloc)
+    ui.section("Resultado esperado")
+    ui.kv("P4 debe iniciar en", 20)
+    ui.kv("Fragmentacion externa", 15, "u")
+
+
+
+# Bucle principal
+
+def main() -> None:
+    if "--demo" in sys.argv:
+        run_demo()
+        return
+
+    ui.clear()
+    ui.banner("Simulador de Asignacion Contigua",
+              "First Fit - Best Fit - Worst Fit")
+    try:
+        total = int(ui.prompt("Tamaño total de memoria (Enter = 100)") or "100")
+        thr = int(ui.prompt("Umbral de division (Enter = 4)") or "4")
+    except ValueError:
+        total, thr = 100, 4
+        ui.warn("Valores invalidos, uso 100uds y umbral 4uds")
+
+    alloc = MemoryAllocator(total_size=total, threshold=thr)
+
+    options = [
+        ("1", "Asignar proceso"),
+        ("2", "Liberar proceso"),
+        ("3", "Ver estado de la memoria"),
+        ("4", "Reiniciar memoria"),
+        ("5", "Correr caso de prueba (demo)"),
+        ("0", "Salir"),
+    ]
 
     while True:
+        ui.menu("Menu principal", options)
+        choice = ui.prompt("Opcion")
 
-        print("\n1. Asignar")
-        print("2. Ver memoria")
-        print("0. Salir")
-
-        op = input("Opción: ")
-
-        if op == "1":
-            asignar()
-
-        elif op == "2":
-            mostrar_memoria()
-
-        elif op == "0":
+        if choice == "1":
+            action_allocate(alloc)
+            show_state(alloc)
+        elif choice == "2":
+            action_free(alloc)
+            show_state(alloc)
+        elif choice == "3":
+            show_state(alloc)
+        elif choice == "4":
+            action_reset(alloc)
+            show_state(alloc)
+        elif choice == "5":
+            run_demo()
+        elif choice == "0":
+            ui.ok("Hasta luego")
             break
+        else:
+            ui.warn("Opcion no reconocida")
+        ui.pause()
 
-main()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        ui.info("Se interrumpió")
