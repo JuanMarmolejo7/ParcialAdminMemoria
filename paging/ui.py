@@ -6,6 +6,7 @@ proporcional para que la salida por consola sea clara y ordenada
 """
 
 import os
+import re
 import shutil
 
 
@@ -45,6 +46,35 @@ _PROC_BG = [BG_BLUE, BG_CYAN, BG_MAGENTA, BG_YELLOW]
 def proc_color(pid: int) -> str:
     """Color de fondo estable para un pid dado"""
     return _PROC_BG[pid % len(_PROC_BG)]
+
+
+# Utilidad para medir/alinear texto con codigos ANSI
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible_len(s: str) -> int:
+    """Longitud visible de un string, ignorando codigos de color ANSI
+
+    Sin esto, celdas como '{GREEN}LIBRE{RESET}' se miden con mas caracteres de los que realmente se ven en pantalla
+    y las tablas quedan descuadradas (columnas mas anchas de lo necesario, bordes que no alinean)
+    """
+    return len(_ANSI_RE.sub("", s))
+
+
+def _pad(s: str, width: int, align: str = "l") -> str:
+    """Alinea `s` a `width` columnas visibles, preservando sus codigos ANSI
+
+    No se puede usar str.ljust/rjust/center directamente porque cuentan los codigos de color como caracteres visibles
+    """
+    faltante = max(0, width - _visible_len(s))
+    if align == "r":
+        return " " * faltante + s
+    if align == "c":
+        izq = faltante // 2
+        der = faltante - izq
+        return " " * izq + s + " " * der
+    return s + " " * faltante
 
 
 
@@ -129,22 +159,21 @@ def table(headers, rows, aligns=None) -> None:
     """
     Imprime una tabla simple con bordes
     headers: lista de str. rows: lista de listas. aligns: 'l'/'r'/'c' por col
+
+    Los anchos de columna y el padding se calculan sobre la longitud
+    VISIBLE del texto (sin contar codigos de color ANSI), para que
+    celdas coloreadas (como "LIBRE" en verde o "P3" en azul) no
+    descuadren los bordes de la tabla.
     """
     cols = len(headers)
     aligns = aligns or ["l"] * cols
-    widths = [len(str(h)) for h in headers]
+    widths = [_visible_len(str(h)) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(str(cell)))
+            widths[i] = max(widths[i], _visible_len(str(cell)))
 
     def fmt(cell, i):
-        s = str(cell)
-        w = widths[i]
-        if aligns[i] == "r":
-            return s.rjust(w)
-        if aligns[i] == "c":
-            return s.center(w)
-        return s.ljust(w)
+        return _pad(str(cell), widths[i], aligns[i])
 
     top = "┌" + "┬".join("─" * (w + 2) for w in widths) + "┐"
     sep = "├" + "┼".join("─" * (w + 2) for w in widths) + "┤"
