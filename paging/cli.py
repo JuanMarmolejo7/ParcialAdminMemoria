@@ -1,12 +1,13 @@
 """
-Simulador de paginacion de un nivel - Interfaz de consola|
+Simulador de paginacion de un nivel - Interfaz de consola
 
 Menu interactivo para crear/terminar procesos, ver las tablas de paginas,
 el estado de los marcos fisicos y traducir direcciones virtuales a fisicas
 
 Uso:
-    python cli.py           # inicia el menu interactivo
-    python cli.py --demo    # corre el caso de prueba del enunciado y termina
+    python cli.py                     # inicia el menu interactivo
+    python cli.py --demo              # corre el caso de prueba del enunciado y termina
+    python cli.py --file procesos.txt # ejecuta un archivo de procesos y termina
 """
 
 import importlib.util
@@ -42,9 +43,9 @@ PagingSystem = _paging.PagingSystem
 TranslationError = _paging.TranslationError
 
 
-# ---------------------------------------------------------------------- #
+
 # Visualizacion
-# ---------------------------------------------------------------------- #
+
 def draw_frames(system: PagingSystem) -> None:
     """Dibuja los marcos fisicos como una grilla de celdas."""
     ui.section("Marcos fisicos")
@@ -144,9 +145,95 @@ def action_reset(system: PagingSystem) -> None:
         ui.error(str(e))
 
 
-# ---------------------------------------------------------------------- #
+def action_load_file(system: PagingSystem) -> None:
+    ruta = ui.prompt("Ruta del archivo .txt de procesos")
+    run_from_file(system, ruta)
+
+
+
+# Carga de procesos desde archivo
+
+def run_from_file(system: PagingSystem, path: str) -> None:
+    """
+    Ejecuta un archivo de texto con una instruccion por linea.
+
+    Formato soportado (una instruccion por linea, mayus/minus indiferente):
+        CREATE <pid> <size_bytes>
+        TERMINATE <pid>
+        TRANSLATE <pid> <direccion_virtual>
+        RESET <virtual_size> <physical_size> <page_size>
+        # esto es un comentario y las lineas vacias se ignoran
+    """
+    ui.banner(f"Archivo: {os.path.basename(path)}", "Ejecutando procesos desde archivo")
+
+    if not os.path.isfile(path):
+        ui.error(f"No se encontro el archivo: {path}")
+        return
+
+    with open(path, "r", encoding="utf-8") as f:
+        lineas = f.readlines()
+
+    ejecutadas, fallidas = 0, 0
+    for num, cruda in enumerate(lineas, start=1):
+        linea = cruda.strip()
+        if not linea or linea.startswith("#"):
+            continue
+
+        partes = linea.split()
+        comando = partes[0].upper()
+
+        try:
+            if comando == "CREATE":
+                if len(partes) < 3:
+                    raise ValueError("CREATE requiere: pid size_bytes")
+                pid = int(partes[1])
+                size = int(partes[2])
+                proc = system.create_process(pid, size)
+                ui.ok(f"[L{num}] CREATE P{pid} ({size} bytes) -> {proc.num_pages} paginas")
+
+            elif comando == "TERMINATE":
+                if len(partes) < 2:
+                    raise ValueError("TERMINATE requiere: pid")
+                pid = int(partes[1])
+                if system.terminate_process(pid):
+                    ui.ok(f"[L{num}] TERMINATE P{pid} -> marcos liberados")
+                else:
+                    ui.warn(f"[L{num}] TERMINATE P{pid} -> proceso no existe")
+
+            elif comando == "TRANSLATE":
+                if len(partes) < 3:
+                    raise ValueError("TRANSLATE requiere: pid direccion_virtual")
+                pid = int(partes[1])
+                vaddr = int(partes[2])
+                r = system.translate(pid, vaddr)
+                ui.ok(f"[L{num}] TRANSLATE P{pid} vaddr={vaddr} -> "
+                      f"pagina={r['page']} marco={r['frame']} "
+                      f"fisica={r['physical_address']}")
+
+            elif comando == "RESET":
+                if len(partes) < 4:
+                    raise ValueError("RESET requiere: virtual_size physical_size page_size")
+                v, p, pg = int(partes[1]), int(partes[2]), int(partes[3])
+                system.reset(virtual_size=v, physical_size=p, page_size=pg)
+                ui.ok(f"[L{num}] RESET -> {system.total_frames} marcos disponibles")
+
+            else:
+                raise ValueError(f"instruccion desconocida '{comando}'")
+
+            ejecutadas += 1
+        except (ValueError, TranslationError, IndexError) as e:
+            ui.error(f"[L{num}] '{linea}' -> {e}")
+            fallidas += 1
+
+    ui.section("Resumen del archivo")
+    ui.kv("Lineas ejecutadas", ejecutadas)
+    ui.kv("Lineas con error", fallidas)
+    show_state(system)
+
+
+
 # Caso de prueba del enunciado
-# ---------------------------------------------------------------------- #
+
 def run_demo() -> None:
     ui.banner("DEMO - Paginacion", "Caso de prueba del enunciado")
     system = PagingSystem(virtual_size=1024, physical_size=512, page_size=64)
@@ -173,6 +260,15 @@ def main() -> None:
         run_demo()
         return
 
+    if "--file" in sys.argv:
+        idx = sys.argv.index("--file")
+        if idx + 1 >= len(sys.argv):
+            sys.exit("Uso: python cli.py --file <ruta_al_archivo.txt>")
+        ruta = sys.argv[idx + 1]
+        system = PagingSystem(virtual_size=1024, physical_size=512, page_size=64)
+        run_from_file(system, ruta)
+        return
+
     ui.clear()
     ui.banner("Simulador de Paginacion", "Traduccion de direcciones - 1 nivel")
     try:
@@ -192,6 +288,7 @@ def main() -> None:
         ("4", "Ver estado del sistema"),
         ("5", "Reiniciar sistema"),
         ("6", "Correr caso de prueba (demo)"),
+        ("7", "Cargar archivo de procesos (.txt)"),
         ("0", "Salir"),
     ]
 
@@ -214,6 +311,8 @@ def main() -> None:
             show_state(system)
         elif choice == "6":
             run_demo()
+        elif choice == "7":
+            action_load_file(system)
         elif choice == "0":
             ui.ok("Hasta luego.")
             break

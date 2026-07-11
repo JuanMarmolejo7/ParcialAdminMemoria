@@ -1,0 +1,12 @@
+# Ejemplo de archivo de procesos para el simulador de asignacion contigua
+# Formato: ALLOCATE pid size [estrategia]  |  FREE pid  |  RESET total [umbral]
+# Las lineas que empiezan con # son comentarios y se ignoran
+
+ALLOCATE 1 20 first
+ALLOCATE 2 30 first
+ALLOCATE 3 10 first
+FREE 2
+ALLOCATE 4 15 best
+ALLOCATE 5 40 worst
+FREE 1
+ALLOCATE 6 5 first

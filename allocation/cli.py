@@ -6,8 +6,9 @@ First / Best / Worst Fit y visualizar el mapa de memoria y las metricas
 de fragmentacion.
 
 Uso:
-    python cli.py           # inicia el menu interactivo
-    python cli.py --demo    # corre el caso de prueba del enunciado y termina
+    python cli.py                     # inicia el menu interactivo
+    python cli.py --demo              # corre el caso de prueba del enunciado y termina
+    python cli.py --file procesos.txt # ejecuta un archivo de procesos y termina
 """
 
 import importlib.util
@@ -134,6 +135,86 @@ def action_reset(alloc: MemoryAllocator) -> None:
         ui.error(str(e))
 
 
+def action_load_file(alloc: MemoryAllocator) -> None:
+    ruta = ui.prompt("Ruta del archivo .txt de procesos")
+    run_from_file(alloc, ruta)
+
+
+# Carga de procesos desde archivo
+
+def run_from_file(alloc: MemoryAllocator, path: str) -> None:
+    """
+    Ejecuta un archivo de texto con una instruccion por linea
+
+    Formato soportado (una instruccion por linea, mayus/minus indiferente):
+        ALLOCATE <pid> <size> [estrategia]   -> estrategia por defecto: first
+        FREE <pid>
+        RESET <total_size> [threshold]
+        # esto es un comentario y las lineas vacias se ignoran
+    """
+    ui.banner(f"Archivo: {os.path.basename(path)}", "Ejecutando procesos desde archivo")
+
+    if not os.path.isfile(path):
+        ui.error(f"No se encontro el archivo: {path}")
+        return
+
+    with open(path, "r", encoding="utf-8") as f:
+        lineas = f.readlines()
+
+    ejecutadas, fallidas = 0, 0
+    for num, cruda in enumerate(lineas, start=1):
+        linea = cruda.strip()
+        if not linea or linea.startswith("#"):
+            continue
+
+        partes = linea.split()
+        comando = partes[0].upper()
+
+        try:
+            if comando == "ALLOCATE":
+                if len(partes) < 3:
+                    raise ValueError("ALLOCATE requiere: pid size [estrategia]")
+                pid = int(partes[1])
+                size = int(partes[2])
+                strat = partes[3].lower() if len(partes) > 3 else "first"
+                if strat not in MemoryAllocator.STRATEGIES:
+                    raise ValueError(f"estrategia invalida '{strat}'")
+                if alloc.allocate(pid, size, strat):
+                    ui.ok(f"[L{num}] ALLOCATE P{pid} ({size}u, {strat}) -> asignado")
+                else:
+                    ui.warn(f"[L{num}] ALLOCATE P{pid} ({size}u, {strat}) -> sin espacio suficiente")
+
+            elif comando == "FREE":
+                if len(partes) < 2:
+                    raise ValueError("FREE requiere: pid")
+                pid = int(partes[1])
+                if alloc.free(pid):
+                    ui.ok(f"[L{num}] FREE P{pid} -> liberado")
+                else:
+                    ui.warn(f"[L{num}] FREE P{pid} -> proceso no encontrado")
+
+            elif comando == "RESET":
+                if len(partes) < 2:
+                    raise ValueError("RESET requiere: total_size [threshold]")
+                total = int(partes[1])
+                thr = int(partes[2]) if len(partes) > 2 else alloc.threshold
+                alloc.reset(total_size=total, threshold=thr)
+                ui.ok(f"[L{num}] RESET -> memoria de {total}u, umbral {thr}u")
+
+            else:
+                raise ValueError(f"instruccion desconocida '{comando}'")
+
+            ejecutadas += 1
+        except (ValueError, IndexError) as e:
+            ui.error(f"[L{num}] '{linea}' -> {e}")
+            fallidas += 1
+
+    ui.section("Resumen del archivo")
+    ui.kv("Lineas ejecutadas", ejecutadas)
+    ui.kv("Lineas con error", fallidas)
+    show_state(alloc)
+
+
 # Caso de prueba del enunciado
 
 def run_demo() -> None:
@@ -167,6 +248,15 @@ def main() -> None:
         run_demo()
         return
 
+    if "--file" in sys.argv:
+        idx = sys.argv.index("--file")
+        if idx + 1 >= len(sys.argv):
+            sys.exit("Uso: python cli.py --file <ruta_al_archivo.txt>")
+        ruta = sys.argv[idx + 1]
+        alloc = MemoryAllocator(total_size=100, threshold=4)
+        run_from_file(alloc, ruta)
+        return
+
     ui.clear()
     ui.banner("Simulador de Asignacion Contigua",
               "First Fit - Best Fit - Worst Fit")
@@ -185,6 +275,7 @@ def main() -> None:
         ("3", "Ver estado de la memoria"),
         ("4", "Reiniciar memoria"),
         ("5", "Correr caso de prueba (demo)"),
+        ("6", "Cargar archivo de procesos (.txt)"),
         ("0", "Salir"),
     ]
 
@@ -205,6 +296,8 @@ def main() -> None:
             show_state(alloc)
         elif choice == "5":
             run_demo()
+        elif choice == "6":
+            action_load_file(alloc)
         elif choice == "0":
             ui.ok("Hasta luego")
             break

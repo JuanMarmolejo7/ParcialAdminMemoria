@@ -117,6 +117,14 @@ class MemoryAllocator:
 
     # Liberacion
 
+    def reset(self, total_size: Optional[int] = None, threshold: Optional[int] = None) -> None:
+        """Reinicia el simulador a un unico bloque libre, opcionalmente con nuevos parametros"""
+        self.total_size = total_size if total_size is not None else self.total_size
+        self.threshold = threshold if threshold is not None else self.threshold
+        if self.total_size <= 0:
+            raise ValueError("El tamaño total de memoria debe ser positivo.")
+        self.blocks = [Block(start=0, size=self.total_size, free=True)]
+
     def free(self, pid: int) -> bool:
         """Libera el bloque del proceso `pid` y fusiona vecinos libres."""
         for block in self.blocks:

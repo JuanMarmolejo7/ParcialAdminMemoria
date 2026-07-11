@@ -1,0 +1,12 @@
+# Ejemplo de archivo de procesos para el simulador de paginacion
+# Formato: CREATE pid size_bytes | TERMINATE pid | TRANSLATE pid direccion_virtual
+#          RESET virtual_size physical_size page_size
+# Las lineas que empiezan con # son comentarios y se ignoran
+
+CREATE 1 150
+TRANSLATE 1 130
+CREATE 2 200
+TRANSLATE 2 5
+TERMINATE 1
+CREATE 3 100
+TRANSLATE 3 90

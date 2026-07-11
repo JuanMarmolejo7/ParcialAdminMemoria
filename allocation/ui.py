@@ -43,7 +43,7 @@ _PROC_BG = [BG_BLUE, BG_CYAN, BG_MAGENTA, BG_YELLOW]
 
 
 def proc_color(pid: int) -> str:
-    """Color de fondo estable para un pid dado."""
+    """Color de fondo estable para un pid dado"""
     return _PROC_BG[pid % len(_PROC_BG)]
 
 
@@ -111,7 +111,7 @@ def kv(key: str, value, unit: str = "") -> None:
 
 
 def menu(title: str, options) -> None:
-    """Imprime un menu numerado options: lista de (tecla, descripcion)."""
+    """Imprime un menu numerado options: lista de (tecla, descripcion)"""
     section(title)
     for key, desc in options:
         print(f"  {BOLD}{CYAN}[{key}]{RESET} {desc}")
@@ -156,4 +156,5 @@ def table(headers, rows, aligns=None) -> None:
     print(f"{GREY}{sep}{RESET}")
     for row in rows:
         cells = " │ ".join(fmt(c, i) for i, c in enumerate(row))
-        print(f"{GREY}│{RESET}")
+        print(f"{GREY}│{RESET} {cells} {GREY}│{RESET}")
+    print(f"{GREY}{bot}{RESET}")
