@@ -1,5 +1,5 @@
 """
-Simulador de paginacion de un nivel - Interfaz de consola
+Simulador de paginacion de un nivel - Interfaz de consola|
 
 Menu interactivo para crear/terminar procesos, ver las tablas de paginas,
 el estado de los marcos fisicos y traducir direcciones virtuales a fisicas
