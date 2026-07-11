@@ -1,0 +1,16 @@
+# Ambos simuladores son interactivos por consola.
+# Levantalos de a uno para poder interactuar con el menu:
+#   docker compose run --rm allocation
+#   docker compose run --rm paging
+services:
+  allocation:
+    build: ./allocation
+    container_name: sim-asignacion
+    stdin_open: true   # -i : mantener stdin abierto para el menu
+    tty: true          # -t : asignar terminal
+
+  paging:
+    build: ./paging
+    container_name: sim-paginacion
+    stdin_open: true
+    tty: true
